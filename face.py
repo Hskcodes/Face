@@ -86,7 +86,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Main function to run the bot
 def main():
     # Replace 'YOUR_TELEGRAM_BOT_TOKEN' with your bot token from BotFather
-    bot_token = "BOTOKEN"
+    bot_token = "6934514903:AAHLVkYqPEwyIZiyqEhJocOrjDYwTk9ue8Y"
 
     app = Application.builder().token(bot_token).build()
 
