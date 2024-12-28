@@ -16,7 +16,7 @@ def extract_faces(video_path, max_faces=5, padding=50):
             break
         frame_count += 1
 
-        # Process every 10th frame to save computation time
+        # Process every 17th frame to save computation time
         if frame_count % 17 != 0:
             continue
 
@@ -40,9 +40,8 @@ def extract_faces(video_path, max_faces=5, padding=50):
 
 # Handler for video messages
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    video = update.message.video
-
-    if video:
+    if update.message and update.message.video:
+        video = update.message.video
         file = await context.bot.get_file(video.file_id)
         video_path = "input_video.mp4"
 
@@ -97,4 +96,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
