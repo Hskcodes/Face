@@ -106,7 +106,7 @@ def main():
 
     # Thread pool executor for better performance with large files
     with ThreadPoolExecutor() as executor:
-        app.run_polling(allowed_updates=Update.ALL_TYPES, poll_interval=1, workers=4)
+        app.run_polling(allowed_updates=Update.ALL_TYPES, poll_interval=1)
 
 if __name__ == "__main__":
     main()
