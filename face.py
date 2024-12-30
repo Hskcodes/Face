@@ -1,8 +1,8 @@
 import cv2
 import os
 import logging
-from telegram import Update, InputMediaPhoto
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from concurrent.futures import ThreadPoolExecutor
 
 # Set up logging to track issues
@@ -58,40 +58,47 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await file.download_to_drive(video_path)  # Save the video file
         await update.message.reply_text("Processing video to extract faces...")
 
-        # Extract faces from the video
-        if os.path.exists(video_path):
-            faces = extract_faces(video_path, max_faces=5, padding=150)  # Increase padding for larger zoom-out
-            os.remove(video_path)  # Clean up the input file
+        # Ask user how many faces to extract (limit 10)
+        keyboard = [[InlineKeyboardButton(str(i), callback_data=f'faces_{i}') for i in range(1, 11)]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("How many faces would you like to extract? (1 to 10)", reply_markup=reply_markup)
 
-            if faces:
-                # Save and send up to 5 detected faces
-                media_group = []
-                for i, face in enumerate(faces):
-                    face_path = f"detected_face_{i}.jpg"
-                    cv2.imwrite(face_path, face)
-                    media_group.append(InputMediaPhoto(media=open(face_path, 'rb')))
-                
-                # Send all detected faces as a media group
-                await update.message.reply_media_group(media_group)
+# Callback handler for inline button presses (user selects number of faces)
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()  # Acknowledge the button press
+    
+    choice = query.data
+    if choice.startswith('faces_'):
+        num_faces = int(choice.split('_')[1])
+        context.user_data['max_faces'] = num_faces
+        await query.edit_message_text(f"Number of faces to extract: {num_faces}")
+        
+        # Now process the video to extract faces
+        video_path = "input_video.mp4"
+        faces = extract_faces(video_path, max_faces=num_faces, padding=150)  # Using padding as per previous setup
+        os.remove(video_path)  # Clean up the input file
 
-                # Clean up saved images
-                for i in range(len(faces)):
-                    os.remove(f"detected_face_{i}.jpg")
-            else:
-                await update.message.reply_text("No faces detected in the video. Please try another video.")
+        if faces:
+            # Save and send up to the selected number of detected faces
+            media_group = []
+            for i, face in enumerate(faces):
+                face_path = f"detected_face_{i}.jpg"
+                cv2.imwrite(face_path, face)
+                media_group.append(InputMediaPhoto(media=open(face_path, 'rb')))
+            
+            # Send all detected faces as a media group
+            await query.message.reply_media_group(media_group)
+
+            # Clean up saved images
+            for i in range(len(faces)):
+                os.remove(f"detected_face_{i}.jpg")
         else:
-            await update.message.reply_text("Failed to download the video. Please try again.")
-    else:
-        await update.message.reply_text("Please send a valid video.")
+            await query.message.reply_text("No faces detected in the video. Please try another video.")
 
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Hi! Send me a video, and I'll extract faces from it.")
-
-# Set Faces command handler
-async def set_faces(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # This can be expanded to allow the user to control settings like max_faces or padding
-    await update.message.reply_text("You can set the number of faces and padding, but currently default settings are used.")
 
 # Main function to run the bot
 def main():
@@ -101,8 +108,8 @@ def main():
     app = Application.builder().token(bot_token).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("set_faces", set_faces))  # Add the set_faces command
     app.add_handler(MessageHandler(filters.VIDEO, handle_video))
+    app.add_handler(CallbackQueryHandler(button))  # Add the callback query handler for button presses
 
     # Thread pool executor for better performance with large files
     with ThreadPoolExecutor() as executor:
