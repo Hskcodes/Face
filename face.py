@@ -1,7 +1,13 @@
 import cv2
 import os
+import logging
 from telegram import Update, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from concurrent.futures import ThreadPoolExecutor
+
+# Set up logging to track issues
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Function to detect faces and return multiple cropped faces with large padding
 def extract_faces(video_path, max_faces=5, padding=50):
@@ -82,17 +88,25 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Hi! Send me a video, and I'll extract faces from it.")
 
+# Set Faces command handler
+async def set_faces(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # This can be expanded to allow the user to control settings like max_faces or padding
+    await update.message.reply_text("You can set the number of faces and padding, but currently default settings are used.")
+
 # Main function to run the bot
 def main():
-    # Replace 'YOUR_TELEGRAM_BOT_TOKEN' with your bot token from BotFather
-    bot_token = "6934514903:AAHLVkYqPEwyIZiyqEhJocOrjDYwTk9ue8Y"
+    # Hardcoded bot token (for testing purposes only)
+    bot_token = "6934514903:AAHLVkYqPEwyIZiyqEhJocOrjDYwTk9ue8Y"  # Your actual bot token here
 
     app = Application.builder().token(bot_token).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("set_faces", set_faces))  # Add the set_faces command
     app.add_handler(MessageHandler(filters.VIDEO, handle_video))
 
-    app.run_polling()
+    # Thread pool executor for better performance with large files
+    with ThreadPoolExecutor() as executor:
+        app.run_polling(allowed_updates=Update.ALL_TYPES, poll_interval=1, workers=4)
 
 if __name__ == "__main__":
     main()
