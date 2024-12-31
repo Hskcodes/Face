@@ -102,8 +102,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Main function to run the bot
 def main():
-    # Hardcoded bot token (for testing purposes only)
-    bot_token = "YOUR_BOT_TOKEN_HERE"  # Replace with your actual bot token
+    # Bot token added directly
+    bot_token = "6934514903:AAHLVkYqPEwyIZiyqEhJocOrjDYwTk9ue8Y"
 
     app = Application.builder().token(bot_token).build()
 
