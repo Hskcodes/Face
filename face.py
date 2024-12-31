@@ -1,20 +1,17 @@
 import cv2
 import os
 import logging
-from telegram import Update, InputMediaPhoto
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from concurrent.futures import ThreadPoolExecutor
-import numpy as np
 
 # Set up logging to track issues
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load pre-trained DNN face detection model
-net = cv2.dnn.readNetFromCaffe('deploy.prototxt', 'res10_300x300_ssd_iter_140000.caffemodel')
-
-# Function to detect faces using DNN
-def extract_faces_dnn(video_path, max_faces=10):
+# Function to detect faces and return multiple cropped faces with large padding
+def extract_faces(video_path, max_faces=5, padding=50):
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     cap = cv2.VideoCapture(video_path)
     faces_found = []
     frame_count = 0
@@ -29,25 +26,20 @@ def extract_faces_dnn(video_path, max_faces=10):
         if frame_count % 17 != 0:
             continue
 
-        # Prepare the frame for DNN input
-        blob = cv2.dnn.blobFromImage(frame, 1.0, (300, 300), (104, 177, 123), swapRB=False, crop=False)
-        net.setInput(blob)
-        detections = net.forward()
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
 
-        for i in range(detections.shape[2]):
-            confidence = detections[0, 0, i, 2]
+        for (x, y, w, h) in faces:
+            # Add larger padding to the face region
+            x1 = max(0, x - padding)
+            y1 = max(0, y - padding)
+            x2 = min(frame.shape[1], x + w + padding)
+            y2 = min(frame.shape[0], y + h + padding)
 
-            # Filter out weak detections based on confidence threshold (e.g., 0.5)
-            if confidence > 0.5:
-                # Get bounding box for face detection
-                box = detections[0, 0, i, 3:7] * np.array([frame.shape[1], frame.shape[0], frame.shape[1], frame.shape[0]])
-                (startX, startY, endX, endY) = box.astype("int")
-
-                # Crop and store the detected face
-                face_frame = frame[startY:endY, startX:endX]
-                faces_found.append(face_frame)
-                if len(faces_found) >= max_faces:
-                    break
+            face_frame = frame[y1:y2, x1:x2]
+            faces_found.append(face_frame)
+            if len(faces_found) >= max_faces:
+                break
 
     cap.release()
     return faces_found
@@ -66,67 +58,58 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await file.download_to_drive(video_path)  # Save the video file
         await update.message.reply_text("Processing video to extract faces...")
 
-        # Ask user how many faces to extract
-        await update.message.reply_text("How many faces do you want to extract? (Max 10)")
+        # Ask user how many faces to extract (limit 10)
+        keyboard = [[InlineKeyboardButton(str(i), callback_data=f'faces_{i}') for i in range(1, 11)]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("How many faces would you like to extract? (1 to 10)", reply_markup=reply_markup)
 
-        # Capture the user's response for number of faces
-        def capture_faces(update: Update):
-            try:
-                max_faces = int(update.message.text)
-                if max_faces > 10:
-                    max_faces = 10
-                    update.message.reply_text("Maximum limit is 10 faces.")
-            except ValueError:
-                max_faces = 5
-                update.message.reply_text("Invalid input. Defaulting to 5 faces.")
-            return max_faces
+# Callback handler for inline button presses (user selects number of faces)
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()  # Acknowledge the button press
+    
+    choice = query.data
+    if choice.startswith('faces_'):
+        num_faces = int(choice.split('_')[1])
+        context.user_data['max_faces'] = num_faces
+        await query.edit_message_text(f"Number of faces to extract: {num_faces}")
+        
+        # Now process the video to extract faces
+        video_path = "input_video.mp4"
+        faces = extract_faces(video_path, max_faces=num_faces, padding=150)  # Using padding as per previous setup
+        os.remove(video_path)  # Clean up the input file
 
-        max_faces = capture_faces(update)
+        if faces:
+            # Save and send up to the selected number of detected faces
+            media_group = []
+            for i, face in enumerate(faces):
+                face_path = f"detected_face_{i}.jpg"
+                cv2.imwrite(face_path, face)
+                media_group.append(InputMediaPhoto(media=open(face_path, 'rb')))
+            
+            # Send all detected faces as a media group
+            await query.message.reply_media_group(media_group)
 
-        # Extract faces from the video
-        if os.path.exists(video_path):
-            faces = extract_faces_dnn(video_path, max_faces=max_faces)  # Use DNN-based extraction
-            os.remove(video_path)  # Clean up the input file
-
-            if faces:
-                # Save and send up to 10 detected faces
-                media_group = []
-                for i, face in enumerate(faces):
-                    face_path = f"detected_face_{i}.jpg"
-                    cv2.imwrite(face_path, face)
-                    media_group.append(InputMediaPhoto(media=open(face_path, 'rb')))
-                
-                # Send all detected faces as a media group
-                await update.message.reply_media_group(media_group)
-
-                # Clean up saved images
-                for i in range(len(faces)):
-                    os.remove(f"detected_face_{i}.jpg")
-            else:
-                await update.message.reply_text("No faces detected in the video. Please try another video.")
+            # Clean up saved images
+            for i in range(len(faces)):
+                os.remove(f"detected_face_{i}.jpg")
         else:
-            await update.message.reply_text("Failed to download the video. Please try again.")
-    else:
-        await update.message.reply_text("Please send a valid video.")
+            await query.message.reply_text("No faces detected in the video. Please try another video.")
 
-# Start command handler
+# Start command handler with emoji
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hi! Send me a video, and I'll extract faces from it.")
-
-# Set Faces command handler (Optional for future extension)
-async def set_faces(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("You can set the number of faces, and it will be processed accordingly.")
+    await update.message.reply_text("👋 Hi! Send me a video, and I'll extract faces from it.")
 
 # Main function to run the bot
 def main():
-    # Bot token replaced with the real one
-    bot_token = "6934514903:AAHLVkYqPEwyIZiyqEhJocOrjDYwTk9ue8Y"  # Replace with your actual bot token
+    # Hardcoded bot token (for testing purposes only)
+    bot_token = "YOUR_BOT_TOKEN_HERE"  # Replace with your actual bot token
 
     app = Application.builder().token(bot_token).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("set_faces", set_faces))  # Optional command for future
     app.add_handler(MessageHandler(filters.VIDEO, handle_video))
+    app.add_handler(CallbackQueryHandler(button))  # Add the callback query handler for button presses
 
     # Thread pool executor for better performance with large files
     with ThreadPoolExecutor() as executor:
